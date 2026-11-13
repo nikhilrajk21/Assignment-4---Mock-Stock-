@@ -1,0 +1,10 @@
+fastapi==0.104.1
+pydantic==2.4.2
+uvicorn==0.24.0
+websockets==17.4
+yfinance==1.8.0
+pandas-market-calendars==5.6.0
+exchange-calendars==4.13.2
+Pillow==11.0.0
+httpx==0.25.2
+python-dotenv==1.0.0

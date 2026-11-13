@@ -1,0 +1,86 @@
+.candle-chart {
+  max-width: 64rem;
+  color: #181818;
+  font-family: Geist, system-ui, sans-serif;
+}
+
+.candle-chart h2 {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.candle-chart__plot {
+  height: clamp(20rem, 55vh, 32rem);
+  margin-block: 16px;
+}
+
+.candle-chart label {
+  margin-inline-end: 8px;
+}
+
+.candle-chart select {
+  font: inherit;
+}
+
+.candle-chart__values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.candle-chart__values dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.candle-chart__notice {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.candle-chart__sma {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block: 16px;
+}
+
+.candle-chart__sma input {
+  width: 4.5rem;
+  font: inherit;
+}
+
+.candle-chart__sma .indicator-name {
+  width: 12rem;
+  max-width: 100%;
+}
+
+.paper-table-scroll {
+  overflow-x: auto;
+}
+
+.paper-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.paper-table th,
+.paper-table td {
+  padding: 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.chart-decision-preview {
+  margin: 16px 0;
+}
+
+.chart-decision-preview img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
