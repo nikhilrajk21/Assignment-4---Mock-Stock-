@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 const runner = fileURLToPath(new URL('./smoke-live.mjs', import.meta.url))
 const env = { ...process.env }
 env.OPENAI_API_KEY = ''
-for (const scenario of ['--sma', '--backtest', '--chart-decision', '--chart-chat', '--automation', '--voice']) {
+for (const scenario of ['--sma', '--pnl', '--backtest', '--chart-decision', '--chart-chat', '--automation', '--voice']) {
   console.log('Workstation smoke test ' + scenario)
   const run = spawnSync(process.execPath, [runner, scenario], { env, stdio: 'inherit' })
   if (run.error) throw run.error

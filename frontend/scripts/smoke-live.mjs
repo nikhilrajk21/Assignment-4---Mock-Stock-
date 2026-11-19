@@ -279,13 +279,25 @@ try {
     assert.equal(await page.getByRole('table', { name: 'Paper order history' }).count(), 0)
     console.log('PASS: live Decisions API on a synthetic chart:', await assessment.innerText())
   } else if (process.argv.includes('--backtest')) {
+    const recorded = process.env.IST402_BACKTEST_ACCEPTANCE_CSV
+    if (recorded) {
+      await page.getByLabel('Historical minute CSV (optional)').setInputFiles(recorded)
+      await page.getByLabel('Starting cash (USD)').fill('1000')
+    }
     await page.getByRole('button', { name: 'Run backtest', exact: true }).click()
-    await page.getByText(/Ending equity \$96\.00/).waitFor()
     const orders = page.getByRole('table', { name: 'Simulated orders' })
-    await orders.getByRole('row').filter({ hasText: /buy.*filled.*\$10\.00/ }).waitFor()
-    await orders.getByRole('row').filter({ hasText: /sell.*filled.*\$8\.00/ }).waitFor()
+    if (recorded) {
+      await page.getByText(/Ending equity \$1,002\.34.*Return 0\.23%/).waitFor()
+      assert.equal(await orders.getByRole('cell', { name: 'filled', exact: true }).count(), 15)
+      assert.equal(await page.getByRole('table', { name: 'Account after each candle' }).locator('tbody tr').count(), 42)
+    } else {
+      await page.getByText(/Ending equity \$96\.00/).waitFor()
+      await orders.getByRole('row').filter({ hasText: /buy.*filled.*\$10\.00/ }).waitFor()
+      await orders.getByRole('row').filter({ hasText: /sell.*filled.*\$8\.00/ }).waitFor()
+    }
     assert.equal(errors.length, 0)
-    console.log('PASS: browser backtest, both simulated fills and ending equity')
+    console.log(recorded ? 'PASS: uploaded AAPL recording, 42 valuations, 15 fills, and $1,002.34 ending equity'
+      : 'PASS: browser backtest, both simulated fills and ending equity')
   } else if (automation) {
     const press = name => page.getByRole('button', { name, exact: true }).press('Enter')
     await press('Replay recorded session')
