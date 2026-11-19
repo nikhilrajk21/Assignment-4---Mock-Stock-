@@ -108,8 +108,9 @@ const args = (chartDecision || automation || chat) && !live
   : live || replay || pnl
   ? ['-B', '-m', 'uvicorn', 'backend.main:app', '--host', '127.0.0.1', '--port', String(port)]
   : ['-B', '-m', 'scripts.live_test_feed', String(port), directory]
+const syntheticOnly = chat || liveChat || process.argv.includes('--classroom-assessment')
 const spawnBackend = () => spawn(python, args, {
-  env: { ...process.env, IST402_YAHOO_LIVE: replay || indicators || pnl ? '0' : '1',
+  env: { ...process.env, IST402_YAHOO_LIVE: replay || indicators || pnl || syntheticOnly ? '0' : '1',
     IST402_TEST_MARKET_DATA: live ? '0' : '1', IST402_TEST_SINGLE_SUBSCRIPTION: live ? '1' : '0',
     IST402_OBSERVATIONS_DB: join(directory, 'observations.sqlite3') },
   cwd: root, stdio: 'inherit', windowsHide: true,
