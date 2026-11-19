@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { chromium } from 'playwright'
 import { createServer as createVite } from 'vite'
+import { recordDemo } from './capture-demo.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const directory = await mkdtemp(join(tmpdir(), 'ist402-live-'))
@@ -37,15 +38,20 @@ const history = process.argv.includes('--history')
 const voice = process.argv.includes('--voice')
 const speechFile = process.env.IST402_VOICE_TEST_WAV
 const chartDecision = history || voice || process.argv.includes('--chart-decision')
-const sma = chartDecision || process.argv.includes('--sma')
+const demo = process.argv.includes('--part-4-2-demo')
+const chat = process.argv.includes('--chart-chat')
+const liveChat = process.argv.includes('--chart-chat-live')
+const sma = chartDecision || demo || process.argv.includes('--sma')
 const automation = process.argv.includes('--automation')
 const paper = process.argv.includes('--paper')
-const replay = automation || paper || sma || process.argv.includes('--replay')
+const volumeReference = process.argv.includes('--volume-reference')
+const replay = automation || paper || sma || volumeReference || process.argv.includes('--replay')
 if (replay) {
   execFileSync(python, ['-B', '-c', `
 from datetime import datetime
 from pathlib import Path
 import sys
+import json, os, sqlite3
 from backend.observations import ObservationStore
 store = ObservationStore(Path(sys.argv[1]))
 fixture = [
@@ -77,15 +83,24 @@ if sys.argv[2] == "automation":
         ("15:08:50", "15:09:00", 9, 1011),
         ("15:09:50", "15:10:00", 6, 1012),
     ]
+if sys.argv[2] == "volume-reference":
+    fixture = []
+    source = Path(os.environ["IST402_VOLUME_RECORDING"]).resolve()
+    with sqlite3.connect(source.as_uri() + "?mode=ro", uri=True) as db:
+        for receipt, raw in db.execute("""SELECT received_at_utc, source_json FROM observations
+            WHERE symbol='AAPL' AND received_at_utc >= '2026-11-13T16:19' AND received_at_utc < '2026-11-13T16:22'
+            ORDER BY id"""):
+            store.record(json.loads(raw), datetime.fromisoformat(receipt))
 for source, receipt, price, total in fixture:
     stamp = datetime.fromisoformat("2026-11-09T" + source + "+00:00")
     received = datetime.fromisoformat("2026-11-09T" + receipt + "+00:00")
     store.record({"id": "AAPL", "time": int(stamp.timestamp() * 1000),
                   "price": price, "day_volume": total}, received)
-`, join(directory, 'observations.sqlite3'), automation ? 'automation' : paper ? 'paper' : sma ? 'sma' : 'replay'], { cwd: root })
+`, join(directory, 'observations.sqlite3'), volumeReference ? 'volume-reference'
+  : automation ? 'automation' : paper ? 'paper' : sma ? 'sma' : 'replay'], { cwd: root })
 }
-const args = (chartDecision || automation) && !live
-  ? ['-B', '-m', 'scripts.chart_decision_test_app', String(port), directory, automation ? 'automation' : history ? 'history' : 'chart']
+const args = (chartDecision || automation || chat) && !live
+  ? ['-B', '-m', 'scripts.chart_decision_test_app', String(port), directory, chat ? 'chat' : automation ? 'automation' : history ? 'history' : 'chart']
   : indicators
   ? ['-B', '-c',
     'from pathlib import Path; import sys, uvicorn; import backend.main as app; app.CANDLE_FILE = Path(sys.argv[1]); uvicorn.run(app.app, host="127.0.0.1", port=int(sys.argv[2]))',
@@ -94,20 +109,23 @@ const args = (chartDecision || automation) && !live
   ? ['-B', '-m', 'uvicorn', 'backend.main:app', '--host', '127.0.0.1', '--port', String(port)]
   : ['-B', '-m', 'scripts.live_test_feed', String(port), directory]
 const spawnBackend = () => spawn(python, args, {
-  env: { ...process.env, IST402_YAHOO_LIVE: replay || indicators || pnl ? '0' : '1', IST402_TEST_MARKET_DATA: '1', IST402_OBSERVATIONS_DB: join(directory, 'observations.sqlite3') },
+  env: { ...process.env, IST402_YAHOO_LIVE: replay || indicators || pnl ? '0' : '1',
+    IST402_TEST_MARKET_DATA: live ? '0' : '1', IST402_TEST_SINGLE_SUBSCRIPTION: live ? '1' : '0',
+    IST402_OBSERVATIONS_DB: join(directory, 'observations.sqlite3') },
   cwd: root, stdio: 'inherit', windowsHide: true,
 })
 let backend = spawnBackend()
 let exited = once(backend, 'exit')
 let vite, browser, page
 async function waitForBackend() {
-  for (let attempt = 0; ; attempt++) {
+  const deadline = Date.now() + 60_000
+  while (Date.now() < deadline && backend.exitCode === null && backend.signalCode === null) {
     try {
-      if ((await fetch(api + '/api/health')).ok) break
+      if ((await fetch(api + '/api/health', { signal: AbortSignal.timeout(1000) })).ok) return
     } catch {}
-    if (attempt >= 60 || backend.exitCode !== null) throw new Error('FastAPI did not start')
     await delay(250)
   }
+  throw new Error(`FastAPI did not become ready at ${api} (exit ${backend.exitCode}, signal ${backend.signalCode})`)
 }
 
 try {
@@ -126,12 +144,149 @@ try {
       ...(speechFile ? ['--use-file-for-fake-audio-capture=' + speechFile + '%noloop'] : []),
     ] : [],
   })
-  page = await browser.newPage({ permissions: voice ? ['microphone'] : [] })
+  const context = await browser.newContext({ permissions: voice ? ['microphone'] : [] })
+  page = await context.newPage()
   page.setDefaultTimeout(15000)
   const errors = []
   page.on('pageerror', error => { errors.push(error); console.error(error) })
   await page.goto(vite.resolvedUrls.local[0])
-  if (automation) {
+  if (liveChat) {
+    await page.getByText('AAPL · Synthetic one-minute sample', { exact: true }).waitFor()
+    const panel = page.getByRole('region', { name: 'Chart chat' })
+    const inspect = page.getByLabel('Inspect candle')
+    const messages = panel.getByRole('list', { name: 'Chat messages' }).locator(':scope > li')
+    const send = async (value, count) => {
+      await panel.getByRole('textbox', { name: 'Message' }).fill(value)
+      await panel.getByRole('button', { name: 'Send', exact: true }).click()
+      await messages.nth(count - 1).waitFor({ timeout: 80000 })
+      return messages.nth(count - 1)
+    }
+    const assess = async (turn, clock) => {
+      await turn.getByText('Chart assessment used', { exact: true }).click()
+      await turn.getByText(new RegExp(`${clock}:00Z.*(LONG|SHORT|WAIT) · Choice probability`)).waitFor()
+    }
+    await inspect.selectOption({ label: '2026-11-09 14:31:00 UTC' })
+    const rules = await send('What does WAIT mean under the chart assessment rules?', 1)
+    await rules.getByText('Rules used', { exact: true }).waitFor()
+    assert.equal(await rules.getByText('Chart assessment used', { exact: true }).count(), 0)
+    await assess(await send('Assess the currently attached chart and report its chart time.', 2), '14:31')
+    await inspect.selectOption({ label: '2026-11-09 14:32:00 UTC' })
+    const compare = await send('Assess the currently attached chart and compare the result with your earlier assessment. Include both UTC chart times.', 3)
+    await assess(compare, '14:32')
+    const reply = await compare.locator(':scope > p').nth(1).innerText()
+    assert.match(reply, /14:31/)
+    assert.match(reply, /14:32/)
+    assert.equal(await page.getByRole('table', { name: 'Paper order history' }).count(), 0)
+    console.log('PASS: live SDK rules and assessment tools, two frozen chart times, no simulated order')
+  } else if (chat) {
+    await page.getByText('AAPL · Synthetic one-minute sample', { exact: true }).waitFor()
+    const panel = page.getByRole('region', { name: 'Chart chat' })
+    const send = async text => {
+      await panel.getByRole('textbox', { name: 'Message' }).fill(text)
+      await panel.getByRole('button', { name: 'Send', exact: true }).click()
+    }
+    const inspect = page.getByLabel('Inspect candle')
+    await inspect.selectOption({ label: '2026-11-09 14:31:00 UTC' })
+    await send('What does WAIT mean?')
+    await panel.getByText('Rules used', { exact: true }).waitFor()
+    assert.equal(await panel.getByText('Chart assessment used', { exact: true }).count(), 0)
+    await send('Assess the chart')
+    await inspect.selectOption({ label: '2026-11-09 14:32:00 UTC' })
+    await panel.getByText('Assessment at 2026-11-09T14:31:00Z').waitFor()
+    await send('Assess the updated chart')
+    await panel.getByText('Assessment at 2026-11-09T14:32:00Z').waitFor()
+    await panel.getByText('Chart assessment used', { exact: true }).last().click()
+    await panel.getByText(/WAIT · Choice probability 0\.0%/).last().waitFor()
+    await send('Compare the two assessments')
+    await panel.getByText('Compared chart times 2026-11-09T14:31:00Z and 2026-11-09T14:32:00Z').waitFor()
+    await send('Simulate worker failure')
+    await panel.getByText('Controlled chat worker failure.').waitFor()
+    await panel.getByRole('button', { name: 'New chat' }).click()
+    await send('Compare the two assessments')
+    await panel.getByText('No prior assessment.').waitFor()
+    assert.equal(await page.getByRole('table', { name: 'Paper order history' }).count(), 0)
+    assert.equal(errors.length, 0)
+    console.log('PASS: browser chart chat rules, frozen times, comparisons, fresh chat, and worker failure with stub worker')
+  } else if (demo) {
+    const destination = process.env.IST402_DEMO_FILE
+    if (!destination) throw new Error('Set IST402_DEMO_FILE to the output .webm path')
+    await recordDemo(page, destination, async caption => {
+      await page.getByRole('button', { name: 'Replay recorded session' }).click()
+      await page.getByLabel('Recorded session').locator('option').first().waitFor({ state: 'attached' })
+      await page.getByRole('button', { name: 'Start replay' }).press('Enter')
+      await page.getByText('Observation 1 of 8', { exact: false }).waitFor()
+      caption('Replay fixture · Seven minute closes and a final forming minute')
+      for (let step = 2; step <= 5; step++) {
+        await page.getByRole('button', { name: 'Next observation' }).press('Enter')
+        await page.getByText(`Observation ${step} of 8`, { exact: false }).waitFor()
+      }
+      const marker = page.getByRole('list', { name: 'Crossover markers' }).getByText(/Upward crossover/)
+      await marker.scrollIntoViewIfNeeded()
+      caption('Confirmed upward crossover · Short SMA 16.00 · Long SMA 13.00')
+      await delay(4500)
+      await page.getByRole('button', { name: 'Apply SMA crossover' }).click()
+      const orders = page.getByRole('table', { name: 'Paper order history' })
+      await orders.getByText('pending', { exact: true }).scrollIntoViewIfNeeded()
+      caption('A fresh account queues one simulated order for the next observation')
+      await delay(4500)
+      await page.getByRole('button', { name: 'Next observation' }).press('Enter')
+      await orders.getByText('$7.00', { exact: true }).scrollIntoViewIfNeeded()
+      caption('Next replay observation · One simulated share fills at $7.00')
+      await delay(5000)
+      const upload = process.env.IST402_DEMO_CSV
+      if (upload) {
+        await page.getByLabel('Historical minute CSV (optional)').setInputFiles(upload)
+        await page.getByLabel('Starting cash (USD)').fill('1000')
+      }
+      await page.getByRole('button', { name: 'Run backtest' }).click()
+      const summary = page.getByText(/Starting cash .*Ending equity .*Return/)
+      await summary.scrollIntoViewIfNeeded()
+      caption(upload ? 'Recorded AAPL backtest · Simulated fills at the next available open'
+        : 'Synthetic backtest · Simulated fills at the next available open')
+      await delay(6500)
+      await page.getByRole('table', { name: 'Simulated orders' }).scrollIntoViewIfNeeded()
+      caption('Review both signals and fills · The backtest uses its own account')
+      await delay(4500)
+      await page.getByRole('table', { name: 'Account after each candle' }).scrollIntoViewIfNeeded()
+      caption('Inspect cash, positions, profit and loss, and total equity')
+    })
+    console.log('Recorded Part 4.2 demonstration')
+  } else if (volumeReference) {
+    await page.getByRole('button', { name: 'Replay recorded session' }).click()
+    await page.getByLabel('Recorded session').locator('option').first().waitFor({ state: 'attached' })
+    await page.getByRole('button', { name: 'Start replay' }).press('Enter')
+    const frame = page.getByText(/Observation 1 of /)
+    await frame.waitFor()
+    const total = Number((await frame.innerText()).match(/Observation 1 of (\d+)/)[1])
+    for (let step = 2; step <= total; step++) {
+      await page.getByRole('button', { name: 'Next observation' }).press('Enter')
+      await page.getByText(new RegExp(`Observation ${step} of ${total}\\b`)).waitFor()
+    }
+    await page.getByLabel('Inspect candle').selectOption({ label: '2026-11-13 16:20:00 UTC' })
+    const estimate = page.getByText('Volume', { exact: true }).locator('..').locator('dd')
+    const original = await estimate.innerText()
+    await page.getByRole('button', { name: 'Compare with Yahoo historical volume' }).click()
+    const history = page.getByText(/Yahoo historical volume: [0-9,]+ shares · Retrieved/)
+    await history.waitFor({ timeout: 30000 })
+    assert.equal(await estimate.innerText(), original)
+    console.log('PASS: recorded volume retained:', original, '·', await history.innerText())
+  } else if (process.argv.includes('--classroom-assessment')) {
+    await page.getByText('AAPL · Synthetic one-minute sample', { exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Assess two completed candles' }).click()
+    const assessment = page.getByLabel('Classroom chart assessment')
+    await assessment.getByText(/^(LONG|SHORT|WAIT) · Choice probability/).waitFor({ timeout: 40000 })
+    await assessment.getByText(/AAPL · Chart time .* · Synthetic sample/).waitFor()
+    assert.equal(await page.getByRole('table', { name: 'Paper order history' }).count(), 0)
+    console.log('PASS: live Decisions API on a synthetic chart:', await assessment.innerText())
+  } else if (process.argv.includes('--backtest')) {
+    await page.getByRole('button', { name: 'Run backtest', exact: true }).click()
+    await page.getByText(/Ending equity \$96\.00/).waitFor()
+    const orders = page.getByRole('table', { name: 'Simulated orders' })
+    await orders.getByRole('row').filter({ hasText: /buy.*filled.*\$10\.00/ }).waitFor()
+    await orders.getByRole('row').filter({ hasText: /sell.*filled.*\$8\.00/ }).waitFor()
+    assert.equal(errors.length, 0)
+    console.log('PASS: browser backtest, both simulated fills and ending equity')
+  } else if (automation) {
     const press = name => page.getByRole('button', { name, exact: true }).press('Enter')
     await press('Replay recorded session')
     await page.getByLabel('Recorded session').locator('option').first().waitFor({ state: 'attached' })
@@ -509,6 +664,8 @@ print(json.dumps({"cash": cash, "shares": shares, "fills": fills}))
         ['Unavailable', 'Unavailable', 2],
       ]
       const markers = page.getByRole('list', { name: 'Crossover markers' })
+      const apply = page.getByRole('button', { name: 'Apply SMA crossover' })
+      const orders = page.getByRole('table', { name: 'Paper order history' })
       await page.getByRole('button', { name: 'Start replay' }).press('Enter')
       for (const [index, [short, long, signals]] of expected.entries()) {
         if (index) await page.getByRole('button', { name: 'Next observation' }).press('Enter')
@@ -517,6 +674,24 @@ print(json.dumps({"cash": cash, "shares": shares, "fills": fills}))
         await assertDisplayed('Long SMA', long)
         await page.waitForFunction(count =>
           document.querySelectorAll('[aria-label="Crossover markers"] li').length === count, signals)
+        if (index === 3) {
+          await apply.click()
+          await page.getByText('No confirmed crossover on this candle.').waitFor()
+        } else if (index === 4) {
+          await apply.click()
+          await orders.getByText('pending', { exact: true }).waitFor()
+          await apply.click()
+          await page.getByText('This crossover already has a paper order.').waitFor()
+          assert.equal(await orders.locator('tbody tr').count(), 1)
+        } else if (index === 5) {
+          await orders.getByText('$7.00', { exact: true }).waitFor()
+        } else if (index === 6) {
+          await apply.click()
+          await orders.getByText('pending', { exact: true }).waitFor()
+        } else if (index === 7) {
+          await orders.getByText('$100.00', { exact: true }).waitFor()
+          await page.getByRole('definition').getByText('$1,093.00', { exact: true }).first().waitFor()
+        }
       }
       await markers.getByText(/Upward crossover.*15:04:00 UTC/).waitFor()
       await markers.getByText(/Downward crossover.*15:06:00 UTC/).waitFor()
@@ -576,15 +751,19 @@ print(json.dumps({"cash": cash, "shares": shares, "fills": fills}))
       console.error('Recorded Yahoo observations:', count)
       throw error
     }
-    const observation = execFileSync(python, ['-B', '-c',
-      'import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); print(db.execute("select source_json from observations order by source_time_ms desc,id desc limit 1").fetchone()[0]); db.close()',
-      join(directory, 'observations.sqlite3')], { encoding: 'utf8' }).trim()
-    const quote = JSON.parse(observation)
-    const expectedTime = new Date(Math.floor(Number(quote.time) / 60000) * 60000).toISOString()
-      .replace('T', ' ').replace('.000Z', ' UTC')
-    await page.getByLabel('Inspect candle').selectOption({ label: expectedTime })
-    const displayedClose = await page.getByText('Close', { exact: true }).locator('..').locator('dd').innerText()
-    assert.equal(Number(displayedClose.replaceAll(',', '')), quote.price)
+    const readObservations = () => JSON.parse(execFileSync(python, ['-B', '-c',
+      'import json, sqlite3, sys; db=sqlite3.connect(sys.argv[1]); print(json.dumps(db.execute("select id, source_time_ms, received_at_utc, source_json from observations order by id").fetchall())); db.close()',
+      join(directory, 'observations.sqlite3')], { encoding: 'utf8' }))
+    const displayUtc = value => new Date(value).toISOString().slice(0, 19).replace('T', ' ') + ' UTC'
+    const minute = value => Math.floor(value / 60_000) * 60_000
+    const currentCandle = page.getByLabel('Inspect candle')
+    await currentCandle.locator('option').last().waitFor({ state: 'attached' })
+    const expectedTime = (await currentCandle.locator('option').last().textContent()).trim()
+    await currentCandle.selectOption({ label: expectedTime })
+    const displayedClose = Number((await page.getByText('Close', { exact: true }).locator('..').locator('dd').innerText()).replaceAll(',', ''))
+    assert.ok(readObservations().some(([, sourceTime, , raw]) =>
+      displayUtc(minute(sourceTime)) === expectedTime && Number(JSON.parse(raw).price.toFixed(4)) === displayedClose),
+    `Live chart close ${displayedClose} at ${expectedTime} must match a stored observation`)
     console.log('PASS live quote:', expectedTime, 'close', displayedClose)
     if (process.platform === 'win32') {
       execFileSync('powershell.exe', ['-NoProfile', '-Command',
@@ -592,9 +771,6 @@ print(json.dumps({"cash": cash, "shares": shares, "fills": fills}))
         '" | Where-Object CommandLine -Match "backend\.live_feed" | ForEach-Object { Stop-Process -Id $_.ProcessId }'])
       await page.getByText(/Yahoo Finance feed: disconnected/).waitFor()
       console.log('PASS live Yahoo disconnect while dashboard stayed connected')
-      const readObservations = () => JSON.parse(execFileSync(python, ['-B', '-c',
-        'import json, sqlite3, sys; db=sqlite3.connect(sys.argv[1]); print(json.dumps(db.execute("select id, source_time_ms, received_at_utc, source_json from observations order by id").fetchall())); db.close()',
-        join(directory, 'observations.sqlite3')], { encoding: 'utf8' }))
       const before = readObservations()
       const [, sourceTime, receiptTime, sourceJson] = before[0]
       const firstQuote = JSON.parse(sourceJson)
@@ -603,14 +779,13 @@ print(json.dumps({"cash": cash, "shares": shares, "fills": fills}))
       await page.getByRole('button', { name: 'Start replay' }).press('Enter')
       const frame = page.getByText(/Observation 1 of /)
       await frame.waitFor()
-      const displayUtc = value => new Date(value).toISOString().slice(0, 19).replace('T', ' ') + ' UTC'
       const frameText = await frame.innerText()
       assert.ok(frameText.includes('Source ' + displayUtc(sourceTime)), frameText)
       assert.ok(frameText.includes('Received ' + displayUtc(receiptTime)), frameText)
       const replayClose = await page.getByText('Close', { exact: true }).locator('..').locator('dd').innerText()
-      assert.equal(Number(replayClose.replaceAll(',', '')), firstQuote.price)
+      assert.equal(Number(replayClose.replaceAll(',', '')), Number(firstQuote.price.toFixed(4)))
       assert.deepEqual(readObservations(), before)
-      console.log('PASS real Yahoo replay:', firstQuote.id, sourceTime, receiptTime, 'close', replayClose)
+      console.log('PASS real Yahoo replay: row', before[0][0], firstQuote.id, sourceTime, receiptTime, 'close', replayClose)
     }
   } else {
     await page.getByText('AAPL · Synthetic one-minute sample', { exact: true }).waitFor()

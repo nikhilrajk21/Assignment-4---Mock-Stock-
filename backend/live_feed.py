@@ -73,6 +73,8 @@ class LiveFeed:
                 LOGGER.warning("Yahoo subscription ended: %s", error)
             finally:
                 self.status = "disconnected"
+            if os.environ.get("IST402_TEST_SINGLE_SUBSCRIPTION") == "1":
+                return
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30)
 

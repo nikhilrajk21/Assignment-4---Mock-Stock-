@@ -12,13 +12,18 @@ from pydantic import BaseModel
 from websockets.exceptions import ConnectionClosed
 
 from backend.automation import AutomationControl, AutomationRequest, AutomationStopped, PaperAutomation
+from backend.backtest import BacktestCsvRequest, BacktestRequest, run_backtest
 from backend.candles import Candle, Minute
 from backend.decisions import ChartCaptureError, DecisionRequest, DecisionStore, SnapshotRequest
 from backend.chart_analysis import ChartAnalysisRequest
+from backend.chart_assessment import assess_chart, prepare_assessment, rule_question
+from backend.chart_chat import ChartChatRequest, ChartChats, ChatUnavailable
+from backend.chart_history import fetch_minute_volume
+from backend.decision_provider import ProviderError
 from backend.indicator_store import DuplicateIndicator, EvaluatedIndicator, IndicatorSettings, IndicatorStore, IndicatorWindowUpdate, SavedIndicator
 from backend.indicators import IndicatorEvaluation, SmaPoint, SmaRequest, calculate_sma, evaluate_indicator, indicator_catalog
 from backend.live_feed import LiveFeed, SYMBOL
-from backend.paper import PaperOrder, PaperStore, ReplayAdvance, RequestConflict
+from backend.paper import PaperOrder, PaperStore, Quantity, ReplayAdvance, RequestConflict
 from backend.replay import recorded_sessions, replay
 from backend.timeframes import INTERVALS, roll_up, trading_sessions
 from backend.voice import VoiceError, VoiceOffer, open_voice_session
@@ -39,6 +44,7 @@ async def lifespan(app: FastAPI):
     paper = PaperStore(feed.store.path)
     app.state.paper = paper
     app.state.decisions = DecisionStore(feed.store.path)
+    app.state.chart_chats = ChartChats()
     app.state.automation = PaperAutomation(paper, app.state.decisions)
     feed.on_recorded = paper.process_live
     tasks = []
@@ -160,6 +166,16 @@ async def live(websocket: WebSocket, symbol: str = "AAPL", timeframe: str = "1m"
         return
 
 
+@app.get("/api/volume-reference")
+def minute_volume_reference(timestamp: datetime, symbol: Literal["AAPL"] = "AAPL") -> dict:
+    try:
+        return fetch_minute_volume(symbol, timestamp)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="Yahoo historical volume is unavailable.") from error
+
+
 @app.get("/api/replay/sessions")
 def list_replay_sessions(request: Request):
     return recorded_sessions(request.app.state.live_feed.store.path)
@@ -191,6 +207,19 @@ def replay_step(
 @app.post("/api/indicators/sma", response_model=list[SmaPoint])
 def simple_moving_averages(request: SmaRequest) -> list[SmaPoint]:
     return calculate_sma(request)
+
+
+@app.post("/api/backtest")
+def historical_backtest(request: BacktestRequest) -> dict:
+    return run_backtest(request)
+
+
+@app.post("/api/backtest/csv")
+def historical_backtest_csv(request: BacktestCsvRequest) -> dict:
+    try:
+        return run_backtest(request.to_backtest())
+    except (csv.Error, ValueError) as error:
+        raise HTTPException(status_code=422, detail=str(error).splitlines()[0]) from error
 
 
 @app.get("/api/indicators/types")
@@ -243,6 +272,18 @@ def paper_order(request: Request, payload: PaperOrder):
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+class PaperCrossoverRequest(SnapshotRequest):
+    quantity: Quantity
+
+
+@app.post("/api/paper/crossover")
+def paper_crossover(request: Request, payload: PaperCrossoverRequest) -> dict:
+    if payload.replay is None or payload.source != "recorded":
+        raise HTTPException(status_code=422, detail="Apply a crossover while replaying a recorded session.")
+    snapshot = request.app.state.decisions.freeze(payload, sample_minutes)
+    return request.app.state.paper.submit_crossover(snapshot, payload.quantity)
+
+
 @app.post("/api/paper/replay-step")
 def paper_replay_step(request: Request, payload: ReplayAdvance):
     return request.app.state.paper.advance_replay(payload)
@@ -278,6 +319,43 @@ def create_decision(request: Request, payload: DecisionRequest):
         raise HTTPException(status_code=404, detail="Decision snapshot not found") from error
     except ChartCaptureError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/chart-assessment/rules")
+def chart_assessment_rules() -> dict:
+    return rule_question()
+
+
+@app.post("/api/chart-assessment")
+def chart_assessment(request: Request, capture: DecisionRequest) -> dict:
+    snapshot = request.app.state.decisions.snapshot(capture.snapshot_id)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Chart snapshot not found.")
+    try:
+        return assess_chart(snapshot, capture)
+    except ChartCaptureError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ProviderError as error:
+        raise HTTPException(status_code=502, detail={"status": error.status, "message": str(error)}) from error
+
+
+@app.post("/api/chart-chat")
+def chart_chat(request: Request, submission: ChartChatRequest) -> dict:
+    prepared = None
+    if submission.capture is not None:
+        snapshot = request.app.state.decisions.snapshot(submission.capture.snapshot_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="Chart snapshot not found.")
+        try:
+            prepared = prepare_assessment(snapshot, submission.capture)
+        except ChartCaptureError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+    try:
+        return request.app.state.chart_chats.answer(submission, prepared)
+    except ChatUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="This chat expired. Start a new chat.") from error
 
 
 @app.get("/api/chart-history")

@@ -4,6 +4,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from hashlib import sha256
 import json
 from pathlib import Path
 import sqlite3
@@ -206,6 +207,33 @@ class PaperStore:
         with self.transaction() as db:
             self._submit(db, request)
             return self._state(db, request.symbol)
+
+    def submit_crossover(self, snapshot: dict, quantity: int) -> dict:
+        """Apply one confirmed replay signal, at most once per candle and strategy."""
+        symbol = snapshot["symbol"]
+        selection = ReplaySelection.model_validate(snapshot["replay"])
+        signal = snapshot["crossover"]
+        key = json.dumps([symbol, selection.key(), snapshot["timeframe"], snapshot["timestamp"],
+                          snapshot["short_window"], snapshot["long_window"]])
+        request_id = "sma-" + sha256(key.encode()).hexdigest()
+        with self.transaction() as db:
+            _, shares = self._balance(db, symbol)
+            previous = db.execute("SELECT id FROM paper_orders WHERE request_id=?", (request_id,)).fetchone()
+            pending = db.execute("SELECT id FROM paper_orders WHERE symbol=? AND status='pending'", (symbol,)).fetchone()
+            if previous:
+                result = "This crossover already has a paper order."
+            elif not snapshot["eligible"] or not signal:
+                result = "No confirmed crossover on this candle."
+            elif pending:
+                result = "An order is already pending. Advance replay before applying another signal."
+            elif (signal == "up" and shares) or (signal == "down" and not shares):
+                result = "The account already holds the position." if shares else "No position to close."
+            else:
+                side = "buy" if signal == "up" else "close"
+                self._submit(db, PaperOrder(request_id=request_id, symbol=symbol, side=side,
+                                            quantity=quantity if side == "buy" else None, replay=selection))
+                result = "Paper order queued for the next replay observation."
+            return {**self._state(db, symbol), "strategy_result": result}
 
     def _submit(self, db, request: PaperOrder) -> int | None:
         fingerprint = request.model_dump_json()

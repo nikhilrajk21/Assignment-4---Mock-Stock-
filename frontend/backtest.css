@@ -1,0 +1,8 @@
+.backtest-panel { margin: 2rem auto; padding: 1rem; max-width: 72rem; }
+.backtest-controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; }
+.backtest-controls label { display: grid; gap: .5rem; }
+.backtest-controls input[type=number] { width: 8rem; }
+.backtest-scroll { max-height: 24rem; overflow: auto; margin-block: 1rem; }
+.backtest-scroll table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.backtest-scroll caption { text-align: start; font-weight: 700; padding-block: .5rem; }
+.backtest-scroll th, .backtest-scroll td { white-space: nowrap; text-align: start; padding: .5rem; border-bottom: 1px solid #788291; }

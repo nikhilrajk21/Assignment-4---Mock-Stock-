@@ -3,7 +3,7 @@ import { h, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 
 export default {
-  props: { replayActive: Boolean, frame: Object },
+  props: { replayActive: Boolean, frame: Object, strategySelection: Object },
   setup(props) {
     const account = shallowRef(null)
     const pnl = shallowRef([])
@@ -111,6 +111,25 @@ export default {
       send(order)
     }
 
+    async function applyCrossover() {
+      const shares = Number(quantity.value)
+      if (!props.strategySelection || busy.value) return
+      if (!Number.isSafeInteger(shares) || shares < 1) {
+        message.value = 'Enter a positive whole number of shares.'
+        return
+      }
+      busy.value = true
+      message.value = ''
+      try {
+        const result = await load('/api/paper/crossover', { ...props.strategySelection, quantity: shares })
+        message.value = result.strategy_result
+      } catch (error) {
+        if (!lifetime.signal.aborted) message.value = error.message
+      } finally {
+        busy.value = false
+      }
+    }
+
     const valuation = value => value == null ? 'Unavailable' : money.format(value)
 
     const control = (label, side) => h('button', {
@@ -134,6 +153,8 @@ export default {
         control('Buy shares', 'buy'),
         control('Sell shares', 'sell'),
         control('Close position', 'close'),
+        props.replayActive && h('button', { type: 'button', disabled: busy.value || !props.strategySelection,
+          onClick: applyCrossover }, 'Apply SMA crossover'),
         retry.value && h('button', {
           type: 'button', disabled: busy.value, onClick: () => send(retry.value),
         }, 'Retry order'),
