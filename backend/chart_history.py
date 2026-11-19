@@ -18,6 +18,30 @@ def _text(value):
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
+def fetch_minute_volume(symbol: str, start: datetime, *, ticker_factory=yf.Ticker) -> dict:
+    """Compare a completed chart minute with a later-retrieved Yahoo history bar."""
+    if start.utcoffset() is None or start.second or start.microsecond:
+        raise ValueError("Select a one-minute candle with a time zone.")
+    start = start.astimezone(UTC)
+    now = datetime.now(UTC)
+    if start + timedelta(minutes=1) > now:
+        raise ValueError("Select a completed candle.")
+    day = start.astimezone(NEW_YORK).date()
+    frame = ticker_factory(symbol).history(
+        start=day.isoformat(), end=(day + timedelta(days=1)).isoformat(),
+        interval="1m", prepost=False, auto_adjust=False, actions=False, timeout=15,
+    )
+    volume = None
+    if not frame.empty and "Volume" in frame:
+        matches = frame.loc[frame.index == start, "Volume"]
+        if len(matches) == 1:
+            value = matches.iloc[0]
+            if not pd.isna(value) and math.isfinite(value) and value >= 0 and int(value) == value:
+                volume = int(value)
+    return {"symbol": symbol, "timestamp": _text(start), "volume": volume,
+            "source": "Yahoo Finance historical one-minute bar", "retrieved_at": _text(datetime.now(UTC))}
+
+
 def _coverage(bars, start, end):
     expected = int((end - start).total_seconds() // 300)
     observed = sum(start <= item["start"] < end for item in bars)

@@ -1,5 +1,7 @@
 import CandleChart from './candle-chart.mjs'
+import BacktestPanel from './backtest-panel.mjs'
 import { createApp, h, ref } from 'vue'
+import './backtest.css'
 
 createApp({
   setup() {
@@ -20,6 +22,7 @@ createApp({
     return () => [
       h('h1', 'Assignment 4'),
       h(CandleChart),
+      h(BacktestPanel),
       h('button', { type: 'button', onClick: checkHealth }, 'Check backend status'),
       h('p', { role: 'status' }, status.value),
     ]

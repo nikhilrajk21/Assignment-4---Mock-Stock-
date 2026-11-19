@@ -4,12 +4,15 @@ import io
 import json
 from pathlib import Path
 import sys
+from time import sleep
 
 from PIL import Image
 import uvicorn
 
 import backend.decisions
 import backend.chart_analysis as chart_analysis
+import backend.chart_chat as chart_chat
+from backend.chart_assessment import rule_question
 from backend.decision_provider import ProviderError
 from backend.main import app
 
@@ -103,4 +106,33 @@ if mode == "history":
     chart_analysis.analyze_chart = analyze_fixture
 
 backend.decisions.ask_decisions = record_provider
+
+if mode == "chat":
+    def fixture_worker(payload):
+        text = payload["message"]
+        history = payload["history"]
+        if text == "Simulate worker failure":
+            raise chart_chat.ChatUnavailable("Controlled chat worker failure.")
+        if text == "What does WAIT mean?":
+            answer = "WAIT applies when the evidence is mixed or insufficient."
+            calls = [{"tool": "read_decision_rules", "result": rule_question()}]
+        elif text == "Compare the two assessments":
+            timestamps = [item["chart_time"] for item in history if "chart_time" in item]
+            answer = "Compared chart times " + " and ".join(timestamps) if timestamps else "No prior assessment."
+            calls = []
+        else:
+            assert payload["prepared"]["image"].startswith("data:image/png;base64,")
+            snapshot = payload["prepared"]["metadata"]
+            timestamp = snapshot["timestamp"]
+            sleep(0.35)
+            answer = "Assessment at " + timestamp
+            calls = [{"tool": "assess_current_chart", "result": {
+                "snapshot": snapshot, "choice": "wait", "probability": 0.0,
+            }}]
+        turn = {"role": "user", "content": text}
+        if calls and calls[0]["tool"] == "assess_current_chart":
+            turn["chart_time"] = calls[0]["result"]["snapshot"]["timestamp"]
+        return {"message": answer, "calls": calls, "history": [*history, turn]}
+    chart_chat.run_worker = fixture_worker
+
 uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[1]), log_level="warning")

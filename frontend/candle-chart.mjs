@@ -307,6 +307,14 @@ export default {
       chart?.remove()
     })
 
+    const decisionSelection = () => selected.value?.complete ? {
+      symbol, timeframe: timeframe.value, timestamp: selected.value.timestamp, ...windows,
+      source: source.value.startsWith('Synthetic') ? 'sample' : 'recorded',
+      ...(replay.value && frame.value ? {
+        replay: { start: frame.value.selection.start, end: frame.value.selection.end, step: frame.value.step },
+      } : {}),
+    } : null
+
     return () => h('section', { class: 'candle-chart', 'aria-labelledby': 'candle-title' }, [
       h('h2', { id: 'candle-title' }, 'Price and trading volume'),
       h('p', (replay.value ? frame.value?.selection.symbol ?? replaySymbol.value : symbol) + ' · ' + source.value),
@@ -406,8 +414,13 @@ export default {
           ['Volume', selected.value.volume == null ? 'Unknown' : shares.format(selected.value.volume) + ' shares'],
         ].map(([label, value]) => h('div', [h('dt', label), h('dd', value)]))),
       ]),
+      selected.value && !source.value.startsWith('Synthetic') && h('p',
+        'Stream volume is estimated from Yahoo’s running share counter. Gaps can leave volume unknown.'),
+      selected.value?.complete && timeframe.value === '1m' && !source.value.startsWith('Synthetic')
+        && h(VolumeReference, { timestamp: selected.value.timestamp }),
       h(SavedIndicators, { key: 'saved-indicators', candles: candles.value, selected: selected.value }),
-      h(PaperAccount, { key: 'paper-account', replayActive: replay.value, frame: frame.value }),
+      h(PaperAccount, { key: 'paper-account', replayActive: replay.value, frame: frame.value,
+        strategySelection: replay.value ? decisionSelection() : null }),
       h(PaperAutomation, {
         key: 'paper-automation',
         candles: candles.value,
@@ -422,13 +435,7 @@ export default {
       }),
       h(ChartDecision, {
         key: 'chart-decision',
-        selection: selected.value?.complete ? {
-          symbol, timeframe: timeframe.value, timestamp: selected.value.timestamp, ...windows,
-          source: source.value.startsWith('Synthetic') ? 'sample' : 'recorded',
-          ...(replay.value && frame.value ? {
-            replay: { start: frame.value.selection.start, end: frame.value.selection.end, step: frame.value.step },
-          } : {}),
-        } : null,
+        selection: decisionSelection(),
         visibleRange: () => chart?.timeScale().getVisibleRange(),
       }),
       h('p', { class: 'candle-chart__notice' }, [
@@ -438,3 +445,4 @@ export default {
     ])
   },
 }
+import VolumeReference from './volume-reference.mjs'

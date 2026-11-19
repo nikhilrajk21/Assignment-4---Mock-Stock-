@@ -90,6 +90,22 @@ Select a saved decision and start voice to discuss the recorded findings and acc
 
 ## Workstation SmokeTest
 
+### Part 4.2 strategy and backtest
+
+In recorded replay, select a completed candle and choose **Apply SMA crossover** in the paper account. The backend recalculates the configured crossover from the observations visible at the replay step. A confirmed upward cross can queue a buy while flat. A confirmed downward cross can queue a close while holding shares. Repeating a signal cannot create a second strategy order. Advance replay to supply the next eligible observation and inspect the fill and the profit and loss table.
+
+The **Historical SMA backtest** panel can run a synthetic example or an uploaded CSV with `timestamp`, `open`, and `close` columns. Use increasing one-minute timestamps with explicit time zones and completed bars. The backtest starts with its own balance, evaluates the signal at each close, and models zero-fee fills at the next available bar's open. Uploaded historical values may reflect later revisions. To reconstruct bars from the saved Yahoo recording using data available at each minute close, run `python -B -m scripts.export_recorded_backtest DB_PATH AAPL START_UTC END_UTC` and save the CSV output.
+
+The chart's streamed Yahoo volume is an estimate calculated from consecutive cumulative-counter observations. Selecting **Compare with Yahoo historical volume** on a completed one-minute candle fetches the separately published bar and displays its retrieval time. This comparison leaves recorded replay data intact.
+
+### Classroom chart assessment and chat
+
+**Assess two completed candles** uses the image of the selected one-minute chart and displays LONG, SHORT, or WAIT with the probability returned for that choice when available. The chart assistant uses the same classroom rules and can explain them or call the chart assessment tool. In chat, compare assessments after moving to another replay time. The tool details show each actual chart time and output.
+
+The chat worker uses an isolated `.agent-venv` (or the interpreter provided by `IST402_AGENT_PYTHON`) and the backend's `OPENAI_API_KEY`. The isolated environment needs `openai-agents==0.24.0` and `openai==3.52.0`. It runs `backend.agent_worker` without order tools. Each chat has its own history and lasts until FastAPI restarts or the app expires it. Use **New chat** to start an empty conversation.
+
+Run `python -B -m scripts.verify_backtest` and `python -B -m scripts.verify_chart_chat` for known results and conversation bridge checks. The browser suite also exercises replay SMA orders and the historical backtest panel. The bridge check uses a stub worker. A live chat requires the SDK installation, provider access, and a separate live verification.
+
 From the project root, run:
 
 ```powershell

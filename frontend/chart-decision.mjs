@@ -1,6 +1,7 @@
 import { h, onUnmounted, ref, shallowRef } from 'vue'
 import { captureDecisionChart, captureHistoryChart } from './decision-capture.mjs'
 import DecisionVoice from './decision-voice.mjs'
+import ChartChat from './chart-chat.mjs'
 
 async function post(path, body, signal) {
   const response = await fetch(path, {
@@ -11,7 +12,7 @@ async function post(path, body, signal) {
   })
   const result = await response.json()
   if (!response.ok) {
-    throw new Error(typeof result.detail === 'string' ? result.detail : 'Could not request the chart decision.')
+    throw new Error(typeof result.detail === 'string' ? result.detail : result.detail?.message ?? 'Could not request the chart decision.')
   }
   return result
 }
@@ -38,20 +39,23 @@ export default {
     const preview = shallowRef(null)
     const decision = shallowRef(null)
     const chartReading = shallowRef(null)
+    const assessment = shallowRef(null)
     const historicalPreview = shallowRef(null)
     const message = ref('')
     const busy = ref(false)
     const lifetime = new AbortController()
     onUnmounted(() => lifetime.abort())
 
-    async function ask(imageOnly = false) {
+    async function ask(mode = 'paper') {
       if (busy.value || !props.selection) return
       const selection = props.selection
+      const imageOnly = mode === 'history'
       const range = props.visibleRange()
       busy.value = true
       message.value = 'Preparing chart…'
       decision.value = null
       chartReading.value = null
+      assessment.value = null
       historicalPreview.value = null
       preview.value = null
       try {
@@ -74,10 +78,13 @@ export default {
           }
         }
         message.value = 'Waiting for the model…'
-        const result = await post(imageOnly ? '/api/chart-analysis' : '/api/decisions', {
+        const path = mode === 'classroom' ? '/api/chart-assessment'
+          : imageOnly ? '/api/chart-analysis' : '/api/decisions'
+        const result = await post(path, {
           snapshot_id: snapshot.id, ...capture, ...historyFields,
         }, lifetime.signal)
-        if (imageOnly) chartReading.value = result
+        if (mode === 'classroom') assessment.value = result
+        else if (imageOnly) chartReading.value = result
         else decision.value = result
         message.value = ''
       } catch (error) {
@@ -89,8 +96,10 @@ export default {
 
     return () => h('section', { 'aria-labelledby': 'chart-question-title' }, [
       h('h3', { id: 'chart-question-title' }, 'Chart analysis'),
-      h('button', { type: 'button', disabled: !props.selection || busy.value, onClick: () => ask(false) }, 'Ask about chart'),
-      h('button', { type: 'button', disabled: !props.selection || busy.value, onClick: () => ask(true) }, 'Analyze chart direction'),
+      h('button', { type: 'button', disabled: !props.selection || busy.value, onClick: () => ask() }, 'Ask about chart'),
+      h('button', { type: 'button', disabled: !props.selection || busy.value, onClick: () => ask('history') }, 'Analyze chart direction'),
+      h('button', { type: 'button', disabled: props.selection?.timeframe !== '1m' || busy.value,
+        onClick: () => ask('classroom') }, 'Assess two completed candles'),
       !props.selection && h('p', 'Select a completed candle to ask about the chart.'),
       message.value && h('p', { role: 'status' }, message.value),
       preview.value && h('figure', { class: 'chart-decision-preview' }, [
@@ -115,6 +124,13 @@ export default {
           h('dd', { key }, [renderCoverage(value)]),
         ])),
       ]),
+      assessment.value && h('div', { 'aria-label': 'Classroom chart assessment', role: 'status' }, [
+        h('p', assessment.value.snapshot.symbol + ' · Chart time ' + assessment.value.snapshot.timestamp
+          + ' · ' + assessment.value.snapshot.market_data_label),
+        h('p', assessment.value.choice.toUpperCase() + ' · '
+          + (assessment.value.probability == null ? 'Choice probability unavailable'
+            : 'Choice probability ' + (assessment.value.probability * 100).toFixed(1) + '%')),
+      ]),
       decision.value && h('div', { 'aria-label': 'Chart decision result' }, [
         h('p', 'Decision ' + decision.value.id + ' · ' + decision.value.status),
         h('p', decision.value.explanation),
@@ -128,6 +144,7 @@ export default {
         })),
       ]),
       h(DecisionVoice, { key: 'decision-voice', newest: decision.value }),
+      h(ChartChat, { selection: props.selection, visibleRange: props.visibleRange, post }),
     ])
   },
 }
