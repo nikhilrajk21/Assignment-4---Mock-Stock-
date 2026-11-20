@@ -2,7 +2,7 @@
 
 ## What I completed
 
-The workstation displays two configurable simple moving averages and marks upward and downward crossovers. In recorded replay, I can apply a completed candle’s crossover to a long-only paper account. An upward crossover can queue a buy while flat. A downward crossover can queue a close when shares are held. The dashboard shows order status, fill price, cash, shares, and realized and unrealized P&L.
+The workstation displays two configurable simple moving averages and marks upward and downward crossovers. The **Apply SMA crossover** action is available only during replay of a recorded session. When I request it for a completed candle, the app automatically applies the strategy to the long-only paper account. A confirmed upward crossover can queue a buy while the account is flat, and a confirmed downward crossover can queue a close when it holds shares. The dashboard shows order status, fill price, cash, shares, and realized and unrealized P&L.
 
 The backtest uses its own starting balance, reads completed one-minute bars, and shows crossovers, orders, fills, and equity after each bar. The dashboard can run the synthetic example or load a historical CSV.
 
