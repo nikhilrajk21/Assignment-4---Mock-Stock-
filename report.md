@@ -1,28 +1,32 @@
-# Assignment 4, Part 1 — Market Data and the Dashboard
+# Assignment 4, Part 2 — Indicators, Simulated Trading, and Backtesting
 
 ## What I completed
 
-I built an AAPL dashboard with a Vue frontend, a FastAPI backend, and a Yahoo Finance feed. FastAPI sends candlestick and volume updates over a WebSocket. The dashboard identifies the data source, shows the age of the last source observation, and reports when the feed disconnects. A candle inspector shows UTC timestamps, prices, volume when available, and whether the candle has completed. The replay controls let me step through observations saved in SQLite.
+The workstation displays two configurable simple moving averages and marks upward and downward crossovers. In recorded replay, I can apply a completed candle’s crossover to a long-only paper account. An upward crossover can queue a buy while flat. A downward crossover can queue a close when shares are held. The dashboard shows order status, fill price, cash, shares, and realized and unrealized P&L.
 
-## Design decisions
+The backtest uses its own starting balance, reads completed one-minute bars, and shows crossovers, orders, fills, and equity after each bar. The dashboard can run the synthetic example or load a historical CSV.
 
-I chose TradingView Lightweight Charts to display price and volume on a shared time axis. I used SQLite to retain each observation's ID, ticker, source time, receipt time, and decoded provider fields. Exact duplicates retain their original row. Explicitly linked revisions keep both versions and change the reconstructed candle only after the correction arrives. Late observations affect the replay view from the step at which they were received. The backend derives candle completion at the selected cutoff and reports unknown volume when the available quotes cannot establish a share count.
+## Design choices
+
+SMA windows use completed closing prices. A forming candle contributes no average or confirmed crossover. Replay fills occur at the next eligible recorded observation. The historical simulator decides at the candle close and uses the next available bar’s open for the fill. Both assume zero fees. The paper ledger uses weighted average cost. Reapplying the same replay signal creates no duplicate order.
 
 ## Verification
 
-- **Live feed and disconnect.** On November 12, 2026, the Edge live test recorded a Yahoo AAPL quote in SQLite. The chart displayed the corresponding 15:49 UTC candle with a close of 357.93, matching the saved quote. Stopping the Yahoo worker changed the dashboard to disconnected while the browser WebSocket stayed open.
-- **Persistence and replay.** The SQLite checks covered exact duplicates, changed messages at the same source time, and explicitly linked revisions. The browser replayed the same four-observation fixture twice. The late observation changed the candle high from 101 to 103 when it arrived. The final close was 101 and volume was 11 shares. The observation rows stayed unchanged.
-- **Chart updates.** The controlled-feed browser test checked volume alignment, an update to an existing candle, a new candle, and an upstream disconnect.
+- Four unit tests passed. I compared SMA values and crossover markers with hand-calculated results and compared full-batch output with incremental replay. The tests also checked an unfinished candle, weighted average cost, next-bar backtest fills, and an order that ran out of data before it could fill.
+- All seven local Edge acceptance scenarios passed. The graded cases verified that a crossover queued a paper order, the next observation filled it, a repeated request did not duplicate it, and the reverse crossover closed the position. Five expected P&L rows matched Edge and SQLite across a restart.
+- On the partial November 13 AAPL recording, the browser showed 42 account valuations, 15 fills, and $1,002.34 ending equity from $1,000 using SMA windows 2 and 3 and two shares per buy. A separate hand-worked example produced $96 from $100.
+- [GitHub Actions passed all four unit tests and all seven browser scenarios for this commit](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/actions/runs/44601056708). The first run timed out in chart chat when a live Yahoo update replaced the synthetic fixture. I disabled the live feed for synthetic chart checks and verified the corrected workflow on GitHub.
 
-## Remaining limitations
+## Limitations
 
-Yahoo messages can omit volume or contain partial quote coverage. The observed Yahoo payload did not carry an explicit revision identifier, so the revision test used a controlled correction. The new check for browser replay of the same real Yahoo recording remains open. The evening run timed out waiting for a regular-session quote. The recorded fixture replay and the earlier live stream and disconnect checks passed.
+The recorded AAPL sample covers parts of one session. Quote-derived opens approximate fill prices. Missing intervals, fees, spreads, slippage, and a different choice of windows could materially change results. The recorded export uses observations received by each bar’s close. Other imported CSVs may contain later revisions. These runs establish expected simulator behavior on the examples. They do not establish future returns.
 
 ## Repository and evidence
 
 - [GitHub repository](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-)
-- [Submitted application commit 62175bc45f96e32c14ba85e04f65af6530421b48](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/commit/62175bc45f96e32c14ba85e04f65af6530421b48)
-- [Setup and startup](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/blob/62175bc45f96e32c14ba85e04f65af6530421b48/README.md)
-- [Data flow and SQLite schema](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/blob/62175bc45f96e32c14ba85e04f65af6530421b48/docs/design-pipeline.md)
-- [Verification commands and results](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/blob/62175bc45f96e32c14ba85e04f65af6530421b48/docs/verification.md#prompt-08--live-chart-updates)
-- [Dashboard demonstration video](https://drive.google.com/file/d/1vL2FBc9gQRpQgsbbjku7XzKPW711GkCh/view?usp=sharing)
+- [Published commit b3e9c43ffc82859d93426d5e9235862011aa7be6](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/commit/b3e9c43ffc82859d93426d5e9235862011aa7be6)
+- [Setup and usage](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/blob/b3e9c43ffc82859d93426d5e9235862011aa7be6/README.md#part-42-strategy-and-backtest)
+- [Verification log](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/blob/b3e9c43ffc82859d93426d5e9235862011aa7be6/docs/verification.md#graded-part-42-acceptance-checks)
+- [AI use disclosure](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/blob/b3e9c43ffc82859d93426d5e9235862011aa7be6/AI-USE.md)
+
+## Video Link: ()
