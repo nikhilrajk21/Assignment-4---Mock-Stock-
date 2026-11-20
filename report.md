@@ -13,9 +13,10 @@ SMA windows use completed closing prices. A forming candle contributes no averag
 ## Verification
 
 - Four unit tests passed. I compared SMA values and crossover markers with hand-calculated results and compared full-batch output with incremental replay. The tests also checked an unfinished candle, weighted average cost, next-bar backtest fills, and an order that ran out of data before it could fill.
-- All seven local Edge acceptance scenarios passed. The graded cases verified that a crossover queued a paper order, the next observation filled it, a repeated request did not duplicate it, and the reverse crossover closed the position. Five expected P&L rows matched Edge and SQLite across a restart.
+- I reproduced a timing issue in recorded replay. Clicking **Next observation** while a crossover request was still being submitted could advance the chart before the paper order was queued. In local application commit `337c6cf`, replay waits for submission to finish. All four unit tests and seven Edge scenarios passed on the repaired version.
+- In the eight-observation test session, the short SMA crossed above the long SMA at 16.00 versus 13.00. Applying the signal twice queued one buy. The next observation filled one share at $7, leaving $993 cash. After the downward crossover, the close filled at $100, leaving zero shares, $1,093 cash, and $93 realized profit. Running the separate $100 backtest then produced $96 ending equity while the replay account still held $1,093.
 - On the partial November 13 AAPL recording, the browser showed 42 account valuations, 15 fills, and $1,002.34 ending equity from $1,000 using SMA windows 2 and 3 and two shares per buy. A separate hand-worked example produced $96 from $100.
-- [GitHub Actions passed all four unit tests and all seven browser scenarios for this commit](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/actions/runs/44601056708). The first run timed out in chart chat when a live Yahoo update replaced the synthetic fixture. I disabled the live feed for synthetic chart checks and verified the corrected workflow on GitHub.
+- GitHub Actions passed all four unit tests and seven browser scenarios on the published application version `b3e9c43`. The later replay timing fix in `337c6cf` was verified locally. [Published workflow run](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/actions/runs/44601056708)
 
 ## Limitations
 
@@ -29,5 +30,6 @@ The recorded AAPL sample covers parts of one session. Quote-derived opens approx
 - [Verification log](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/blob/b3e9c43ffc82859d93426d5e9235862011aa7be6/docs/verification.md#graded-part-42-acceptance-checks)
 - [AI use disclosure](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/blob/b3e9c43ffc82859d93426d5e9235862011aa7be6/AI-USE.md)
 
-## Video Link: ()
-https://drive.google.com/file/d/1fhG4qB_kOzieyWNSN9yR0jRWTg3zKpTi/view?usp=sharing 
+## Video Link
+
+[Workstation demonstration](https://drive.google.com/file/d/1fhG4qB_kOzieyWNSN9yR0jRWTg3zKpTi/view?usp=sharing) (4 minutes 48 seconds). The required 30–60 second cut is pending.
