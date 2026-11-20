@@ -30,3 +30,4 @@ The recorded AAPL sample covers parts of one session. Quote-derived opens approx
 - [AI use disclosure](https://github.com/nikhilrajk21/Assignment-4---Mock-Stock-/blob/b3e9c43ffc82859d93426d5e9235862011aa7be6/AI-USE.md)
 
 ## Video Link: ()
+https://drive.google.com/file/d/1fhG4qB_kOzieyWNSN9yR0jRWTg3zKpTi/view?usp=sharing 
